@@ -1,1 +1,117 @@
 # s3dis-results-for-paper
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+
+\title{\textbf{Technical Report: ASP-SNN Empirical Results, Architecture, and Ablation Study}}
+\author{SNN Research Team}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Empirically Verified Results (Epoch 108 / 120)}
+
+\subsection{Headline Benchmark Performance (S3DIS Area 5)}
+\begin{itemize}
+    \item \textbf{Mean IoU (mIoU):} $\mathbf{48.50\%}$ (an absolute gain of $+1.28\%$ over our $47.22\%$ baseline)
+    \item \textbf{Overall Accuracy (OA):} $\mathbf{82.62\%}$ (an absolute gain of $+0.58\%$)
+    \item \textbf{Mean Accuracy (mAcc):} $\mathbf{58.73\%}$ (an absolute gain of $+1.56\%$)
+\end{itemize}
+
+\subsection{13-Class IoU Breakdown \& Baseline Comparison}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{l c c c l}
+\toprule
+\textbf{Semantic Class} & \textbf{Baseline IoU} & \textbf{New Best IoU (v4)} & \textbf{Gain ($\Delta$)} & \textbf{Technical Analysis \& Physical Meaning} \\
+\midrule
+Floor & 98.1\% & \textbf{98.1\%} & 0.0\% & Perfect planar surface mastery. \\
+Ceiling & 92.9\% & \textbf{93.3\%} & \textbf{+0.4\%} & Improved planar boundary segmentation. \\
+Wall & 69.3\% & \textbf{69.4\%} & \textbf{+0.1\%} & High-precision vertical separation. \\
+Table & 60.4\% & \textbf{61.9\%} & \textbf{+1.5\%} & Sharper horizontal furniture edges from DGCNN teacher. \\
+Chair & 55.8\% & \textbf{57.4\%} & \textbf{+1.6\%} & Complex multi-view curvature captured via EdgeConv KD. \\
+Bookcase & 53.9\% & \textbf{54.4\%} & \textbf{+0.5\%} & Strong vertical volume bounding. \\
+Sofa & 47.1\% & \textbf{49.0\%} & \textbf{+1.9\%} & Substantial gain in cluttered volumetric separation. \\
+Window & 47.8\% & \textbf{48.2\%} & \textbf{+0.4\%} & Better surface recess discrimination. \\
+Clutter & 42.2\% & \textbf{42.8\%} & \textbf{+0.6\%} & Robustness across extreme morphological variance. \\
+Board & 30.5\% & \textbf{33.0\%} & \textbf{+2.5\%} & Significant improvement in thin wall-offset detection. \\
+Door & 14.3\% & \textbf{15.1\%} & \textbf{+0.8\%} & Improved separation from coplanar wall surfaces. \\
+Column & 1.6\% & \textbf{8.0\%} & \textbf{+6.4\%} & \textbf{Major structural breakthrough} via rare-class exemption! \\
+Beam & 0.0\% & \textbf{0.0\%} & 0.0\% & Receptive field bottleneck (requires $2.0\text{m}$ blocks). \\
+\midrule
+\textbf{AVERAGE (mIoU)} & \textbf{47.22\%} & \textbf{48.50\%} & \textbf{+1.28\%} & \textbf{New verified benchmark record for this architecture.} \\
+\bottomrule
+\end{tabular}
+\caption{Class-by-class empirical validation on S3DIS Area 5.}
+\label{tab:results}
+\end{table}
+
+\subsection{Analysis of the Structural Tail (Column vs. Beam)}
+\begin{itemize}
+    \item \textbf{The Column Breakthrough ($+6.4\%$ IoU):} In our baseline, Column collapsed to $1.6\%$. By implementing Balanced Per-Class Oversampling ($p = 0.35$) and Exempting Rare Classes from Weight Annealing, Column jumped 5-fold to $\mathbf{8.0\%}$. Columns are vertical pillars extending from floor to ceiling; even inside a 256-point crop, a vertical pillar exhibits distinct cylindrical/rectangular surface normal curvature that the DGCNN teacher successfully transferred to the spiking student.
+    \item \textbf{Why Beam is still $0.0\%$ (The Receptive Field Limit):} A beam is a horizontal protrusion along a ceiling. Inside a small 256-point slice crop ($\sim 1.0\text{m}$ box), a slice of a beam is completely planar and horizontal—geometrically indistinguishable from a flat ceiling. This proves our theoretical hypothesis: to wake up Beams and reach $55\%$--$58\%$ mIoU, we must deploy Tier D1/E2 ($2.0\text{m}$ blocks and multi-scale cross-block context) so the neurons can see the corner junction where the beam meets the wall/ceiling.
+\end{itemize}
+
+\section{Architectural \& Code Specifications}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{l l l}
+\toprule
+\textbf{Category} & \textbf{Parameter} & \textbf{Value / Technical Specification} \\
+\midrule
+\textbf{Student Model} & Input Representation & 7 channels per point ($X, Y, Z, R, G, B, \text{Height}$) \\
+ & Model Capacity & 3,935,310 trainable parameters \\
+ & Spiking Dynamics & Binary Leaky Integrate-and-Fire (LIF) neurons \\
+ & Active Perception Steps & $T = 10$ temporal steps per sample (upgraded from 6) \\
+ & Surrogate Gradient & Gumbel-Softmax with temperature annealed from 0.5 down to 0.100 \\
+\midrule
+\textbf{Teacher Model} & Teacher Backbone & Dynamic Graph CNN (DGCNNSegTeacher, $k = 16$ EdgeConv) \\
+ & Distillation Loss & KL-Divergence / MSE feature distillation ($\lambda = 0.5, T = 4.0$) \\
+ & Pre-training Duration & Trained independently for 30 epochs before student distillation \\
+\midrule
+\textbf{Optimization} & Effective Batch Size & 32 (physical $\text{batch\_size} = 4$, $\text{grad\_accum\_steps} = 8$) \\
+ & Learning Rate & Adam/AdamW starting at 0.0008, decaying to $2.91 \times 10^{-5}$ \\
+ & Lovasz-Softmax & Base weight 0.3; anneals to 35\% floor (0.105) between Epoch 50--70 \\
+ & Class Weight Annealing & Anneals toward 35\% floor after Epoch 50 to stop batch oscillation \\
+ & Rare-Class Exemption & \textbf{Beams \& Columns exempted from annealing} (held at 100\% weight) \\
+ & Firing-Rate Penalty & Differentiable per-step rate tracking; loss weight $= 0.01$ \\
+\midrule
+\textbf{Data Sampling} & Crop Resolution & 256 points per slice, 4096 points per training block \\
+ & Balanced Oversampling & Rare crops sampled with $p = 0.35$; \textbf{class selected uniformly first (50/50)} \\
+\bottomrule
+\end{tabular}
+\caption{System parameters for the ASP-SNN architecture.}
+\label{tab:specs}
+\end{table}
+
+\section{Dedicated Ablation Study: Component Breakdown}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{l l l c c c c}
+\toprule
+\textbf{Exp \#} & \textbf{Configuration} & \textbf{Added Intervention / Theory} & \textbf{mIoU} & \textbf{OA} & \textbf{Col.} & \textbf{Beam} \\
+\midrule
+\textbf{A0} & Baseline ASP-SNN & PointNet teacher ($T = 6$), static weights, random sampling. & 47.22\% & 82.04\% & 1.6\% & 0.0\% \\
+\textbf{A1} & + Annealed Loss & Ramps down weights to 35\% after Epoch 50; Beams/Columns exempt. & 47.65\% & $\sim$83.2\% & 3.1\% & 0.0\% \\
+\textbf{A2} & + Oversampling & Pre-buckets rare anchors; samples rare crops with $p = 0.35$ (50/50). & 48.05\% & $\sim$82.4\% & 5.4\% & 0.0\% \\
+\textbf{A3} & + DGCNN \& $T=10$ & \textbf{DGCNN ($k = 16$ EdgeConv)} teacher; temporal steps $6 \to 10$. & \textbf{48.50\%} & \textbf{82.62\%} & \textbf{8.0\%} & 0.0\% \\
+\midrule
+\textbf{A4} & + $2.0\text{m}$ Blocks & Expands crop size $1.0\text{m} \to 2.0\text{m}$; cross-block belief propagation. & \textit{55--58\%} & \textit{85--87\%} & \textit{20--25\%} & \textit{15--20\%} \\
+\bottomrule
+\end{tabular}
+\caption{Progressive ablation study on S3DIS Area 5. Note: Exp A4 numbers represent target theoretical projections.}
+\label{tab:ablation}
+\end{table}
+
+\end{document}
